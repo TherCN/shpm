@@ -1,0 +1,26 @@
+#!/bin/sh
+check_package_list="sed bash wget axel curl aria2c grep tar xz echo install make"
+case $1 in
+	--prefix=*)
+	prefix=$(echo $1|sed "s|--prefix=||g")
+	;;
+esac
+check_package() {
+while [ $# != 0 ]; do
+echo -n "checking for $1... "
+command -v $1
+if [ ! $? = 0 ]; then
+echo "$1 not found, please install $1"
+exit 127
+fi
+shift
+done
+}
+check_package ${check_package_list}
+echo createing Makefile
+if [ ${prefix} = "/usr" ]; then
+sed "s|prefix = @prefix@|prefix = ${prefix}|g;s|sysconfdir = @prefix@/etc|sysconfdir = /etc|g;s|localstatedir = @prefix@/var|localstatedir = /var|g" Makefile.in>Makefile
+else
+sed "s|prefix = @prefix@|prefix = ${prefix}|g;s|@prefix@/|${prefix}/|g" Makefile.in>Makefile
+fi
+

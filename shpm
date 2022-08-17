@@ -1,0 +1,418 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+TEXTDOMAIN=shpm
+TEXTDOMAINDIR=/data/data/com.termux/files/usr/share/locale
+
+build_package() {
+case $2 in
+	-d)
+        case $3 in
+		axel)
+                sed -i "s/${DOWNLOADER}/"'axel -n 32'"/g" ${config_file}
+                ;;
+                aria2)
+		sed -i "s/${DOWNLOADER}/"'aria2c'"/g" ${config_file}
+		;;
+		wget)
+		sed -i "s/${DOWNLOADER}/"'wget'"/g" ${config_file}
+		;;
+		curl)
+		sed -i "s/${DOWNLOADER}/"'curl -L -O'"/g" ${config_file}
+		;;
+		*)
+		echo -e ${error}"$3为未知或不支持的下载器，已将默认下载器设为curl${reset}"
+		sed -i "s/${DOWNLOADER}/"'curl -L -O'"/g" ${config_file}
+		;;
+	esac
+	source ${config_file}
+	echo -e ${stdout}当前下载器为${DOWNLOADER}${reset}
+	command -v ${DOWNLOADER} > /dev/null
+	if [ $? -ne 0 ]; then
+	echo "正在安装下载器"
+	apt install $3
+	fi
+	exit 0
+	;;
+	-s)
+	if [ ${sha256_verify} = "true" ]; then
+	sed -i "s/sha256_verify=true/sha256_verify=false/g" ${config_file}
+	echo 当前为关闭
+	elif [ ${sha256_verify} = "false" ]; then
+	sed -i "s/sha256_verify=false/sha256_verify=true/g" ${config_file}
+	echo 当前为开启
+	fi
+	exit 0
+	;;
+	-c)
+	source build.shpm
+	rm -rf ${package_name}*
+	exit 0
+	;;
+	-h)
+	echo 'SHPM(Shell Package Manager)包构建器 版本0.1
+	-d      修改下载器(可用下载器为:axel,aria2,wget,curl)
+	-s      开启/关闭校验源文件
+	-c	清除源代码目录
+	-h      显示帮助并退出
+	Tips:你也可以输入build.shpm中的函数名来从某个阶段开始构建'
+	exit 0
+	;;
+esac
+[ ${DOWDLOADER} ] && export DOWNLOADER="curl -L -O"
+if [ ! -f build.shpm ]; then
+echo -e ${error}build.shpm不存在！${reset}
+exit 1
+fi
+################
+#在此修改构建者
+builder="Ther CN"
+email="b1431736437@163.com"
+################
+build_file=${PWD}/build.shpm
+source ${build_file}
+file_name=${package_name}_${package_version}-$(uname -m).tar.xz
+if [ -f ${file_name} ]; then
+echo -e ${warning}"${file_name}"已存在,你可以输入[rm ${file_name}]删除,然后再输入shpm -b重新构建${reset}
+exit 1
+fi
+source_dir=${PWD}/${package_name}-src
+install_dir=${PWD}/${package_name}-install
+mkdir ${source_dir} ${install_dir} 2>/dev/null
+cd ${source_dir}
+source_file=${PWD}/$(basename ${package_source})
+if [ ! -f "${source_file}" ]; then
+echo -e ${stdout}正在获取源码${reset}
+echo -e ${stdout} ${DOWNLOADER} ${package_source}${reset} && ${DOWNLOADER} ${package_source}
+fi
+if [ ! ${sha256_verify} = "false" ]; then
+echo "${package_SHA256} ${source_file}">sums.txt
+echo -e ${stdout}正在校验${source_file}...$(sha256sum -c sums.txt|sed "s/.*://g")${reset}
+else
+echo -e ${warning}已跳过源文件校验${reset}
+fi
+if [ ! "$?" = 0 ]; then
+rm -rf ${source_file}
+echo -e ${error}校验失败，已删除源文件${reset}
+fi
+###对源文件进行备份，防止tar在解压后删除源文件而要重新下载源文件
+find -type d >/dev/null
+if [ ! -d *"${package_name}"* ]; then
+cp ${source_file} ${source_file}.bak
+echo -e ${stdout}源码目录不存在，解压源码中${reset}
+proot --link2symlink tar xf ${source_file}
+mv ${source_file}.bak ${source_file}
+else
+echo -e ${stdout}源码已存在，继续${reset}
+fi
+if [ "$2" = "" ]; then
+varibal
+cd ${source_dir}
+modify
+cd ${source_dir}
+configure
+cd ${source_dir}
+echo -e ${stdout}开始构建${reset}
+build
+echo -e ${stdout}开始安装${reset}
+cd ${source_dir}
+rm -rf ${install_dir}/*
+package
+fi
+trap 'get_error' ERR TERM HUP QUIT
+case $2 in
+	modify)
+	modify
+	cd ${source_dir}
+	configure
+	cd ${source_dir}
+	build
+	cd ${source_dir}
+	package
+	;;
+	configure)
+	$2
+	cd ${source_dir}
+	build
+	cd ${source_dir}
+	package
+	;;
+	build)
+	$2
+	cd ${source_dir}
+	package
+	;;
+	package)
+	$2
+	;;
+esac
+cd ${install_dir}
+echo -e ${stdout}正在打包${package_name}${reset}
+find . >files
+sed -i "/files/d" files
+if [ "${package_depends}" = "" ]; then
+echo "Name:${package_name}
+Version:${package_version}
+Url:${package_url}
+License:${package_license}
+Description:${package_description}
+File:${file_name}
+
+Build by ${builder}:${email}">info
+else
+echo "Name:${package_name}
+Version:${package_version}
+Depends:${package_depends}
+Url:${package_url}
+License:${package_license}
+Description:${package_description}
+File:${file_name}
+
+Build by ${builder}:${email}">info
+fi
+if [ -f "../${install_script}" ]; then
+cp ../${install_script} install
+fi
+echo -e ${stdout}正在使用xzip进行压缩，可能需要一段时间，请耐心等待${reset}
+files="files info "
+if [ -d "data" ]; then
+files+="data"
+elif [ -f "install" ]; then
+files+="install"
+elif [ -d "opt" ]; then
+files+="opt"
+elif [ -d "usr" ]; then
+files+="usr"
+fi
+tar -cJf ${file_name} ${files}
+mv "${file_name}" ../
+echo -e ${stdout}构建完成:${file_name}
+}
+
+download_package() {
+while [ $# -ge ${install_args} ]; do
+cd ${packages_dir}
+pkg=$(tar xf ${sync_dir}/${sync_file} ${sync}/'$'${install_args}/info && grep "File:" ${sync}/${install_args}/info|sed "s/File://g")
+echo -e ${stdout}正在下载${pkg}${reser}
+${DOWNLOADER} ${repo}/${pkg}
+shift
+done
+}
+
+extract_package() {
+cd ${package_data_dir}
+while [ $# -ge ${install_args} ]; do
+pkg=$(tar xf ${sync_dir}/${sync_file} ${sync}/'$'${install_args}/info && grep "File:" ${sync}/${install_args}/info|sed "s/File://g")
+echo -e ${stdout}正在解压${pkg}${reset}
+mkdir -p ${install_args}
+cd ${install_args}
+tar xf ${packages_dir}/${pkg} info files
+tar xf ${packages_dir}/${pkg} -C / 2>/dev/null
+shift
+done
+}
+
+get_depends() {
+while [ $# -ge ${install_args} ]; do
+export depends=$(tar xf ${sync_dir}/${sync_file} ${sync}/'$'${install_args}/info && grep "Depends:" ${sync}/${install_args}/info|sed "s/Depends://g")
+shift
+done
+}
+
+check_package_exist() {
+if [ $2 = "-nodep"  ]; then
+	while [ $# -ge ${install_args} ]; do
+	if [ -d ${package_data_dir}/$3 ]; then
+		read -p "$(echo -e "${stdout}$3已被安装，是否重新安装？[Y|n]${reset}")" select
+		case ${select} in
+			Y|y)
+			echo 继续
+			;;
+			n|*)
+			exit 1
+			;;
+		esac
+	fi
+	shift
+	done
+else
+	while [ $# -ge ${install_args} ]; do
+        if [ -d ${package_data_dir}/$2 ]; then
+                read -p "$(echo -e "${stdout}$2已被安装，是否重新安装？[Y|n]${reset}")" select
+                case ${select} in
+                        Y|y)
+                        echo 继续
+                        ;;
+                        n|*)
+                        exit 1
+                        ;;
+                esac
+        fi
+        shift
+        done
+fi
+}
+
+get_version() {
+while [ $# -ge ${install_args} ]; do
+	version=$(tar xf ${sync_dir}/${sync_file} ${sync}/'$'${install_args}/info && grep "Version:" ${sync}/${install_args}/info|sed "s/Version://g")
+	export install_packages_list="'$'${install_args}-${version} "
+	shift
+done
+}
+install_package() {
+case $2 in
+	-nodep)
+	export install_args=3
+	echo -e ${stdout}正在读取数据库${reset}
+	get_version ${package_list}
+	echo -e "${stdout}这是要安装的包:\n${install_packages_list}${reset}"|sed "s/ /\n/g"
+	read -p "$(echo -e ${stdout}是否安装？[y/n]${reset})" continue
+	if [ ${continue} = y ]; then
+        	$0 -i ${package_list}
+	fi
+	check_package_exist $@
+	download_package $@
+        extract_package $@
+	exit $?
+	;;
+	-h)
+	echo 'SHPM(Shell Package Manager)版本0.1
+	-nodep  忽略依赖
+	-h	显示帮助并退出'
+	;;
+esac
+export install_args=2
+package_list=""
+if [ ${package_list} = "" ]; then
+echo -e ${stdout}正在读取数据库${reset}
+check_package_exist $@
+echo -e "${stdout}正在解析依赖${reset}\n\n\n"
+get_depends $@
+elif [ ${depends} = "" ]; then
+	export package_list=$2
+else
+	export package_list="$2 ${depends} "
+	get_depends ${depends}
+	package_list+=${depends}
+fi
+get_version ${package_list}
+echo -e "${stdout}这是要安装的包:\n${install_packages_list}${reset}"|sed "s/ /\n/g"
+read -p "$(echo -e ${stdout}是否安装？[y/n]${reset})" continue
+if [ ${continue} = y ]; then
+	$0 -i ${package_list}
+fi
+}
+
+remove_package() {
+echo 开发中
+}
+help() {
+echo 'SHPM(Shell Package Manager)版本0.1
+
+	-i	安装一个(或多个)包
+	-r	删除一个(或多个包(及其依赖)
+	-b	构建一个包(-bi则构建一个包并安装)
+	-h	显示帮助并退出
+'
+}
+
+get_error() {
+if (( ! BASH_SUBSHELL )); then
+	echo -e "${error}发生错误！退出中...${reset}"
+fi
+exit 2
+}
+
+db_manager() {
+case $2 in
+	-c)
+	echo -e ${stdout}正在创建$3仓库...${reset}
+	mkdir $3
+	tar czf $3.db $3
+	rm -rf $3
+	echo -e ${stdout}完成${reset}
+	;;
+	-a)
+	while [ $# -ge 4 ]; do
+	echo -e ${stdout}正在将$4添加到仓库${reset}
+	pkg=`tar xf $4 info && grep "Name:" info|sed "s/Name://g" && rm info`
+	echo $pkg
+	tar xf $3
+	cd $(echo $3|sed "s/.db//g")
+	mkdir -p ${pkg}
+	cd ${pkg}
+	tar xf ../../$4 info files
+	cd ../..
+	tar czf $3 $(echo $3|sed "s/.db//g")
+	rm -rf $(echo $3|sed "s/.db//g")
+	echo -e ${stdout}完成${reset}
+	done
+	;;
+	-r)
+	tar xf $4
+        rm -rf $(echo $4|sed "s/.db//g")/$3
+        tar czf $4 $(echo $4|sed "s/.db//g")
+	;;
+	-h|*)
+	echo 'SHPM(Shell Package Manager)仓库管理器 版本0.1
+	-c   [仓库名]		创建一个仓库
+	-a   [仓库名]	[文件]	将包添加到仓库里
+	-r   [仓库名]	[文件]	将包从仓库移除
+	-h	显示帮助并退出'
+	;;
+esac
+}
+
+
+main() {
+config_file=/data/data/com.termux/files/usr/etc/shpm.conf
+source ${config_file}
+packages_dir=/data/data/com.termux/files/usr/var/cache/shpm/packages
+sync_dir=/data/data/com.termux/files/usr/var/lib/shpm/sync
+sync=$(basename ${repo})
+sync_file=${sync}.db
+package_data_dir=/data/data/com.termux/files/usr/var/lib/shpm/data
+mkdir -p ${packages_dir} ${sync_dir} ${package_data_dir}
+select=y
+continue=y
+time=[$(date +%H:%M:%S)]
+stdout="\033[1m${time}->"
+error="\033[1;31m${time}->错误:"
+warning="\033[1;33m${time}->警告:"
+reset="\033[0m"
+trap 'echo -e "\n${error}操作被用户取消！${reset}" && exit 130' INT
+case $1 in
+	-i)
+	install_package $@
+	;;
+	-r)
+        echo 开发中
+        ;;
+	-b)
+        build_package $@
+        ;;
+	-bi)
+        build_package $@
+	install_package
+        ;;
+	-db)
+	db_manager $@
+	;;
+	-u)
+	echo 正在更新软件库
+	cd ${sync_dir}
+	${DOWNLOADER} ${repo}/${sync_file}
+	;;
+	-h)
+        help
+	;;
+	*)
+	echo "$0:$1为无效输入，退出"
+	help
+	exit 1
+	;;
+esac
+}
+
+main $@
+
